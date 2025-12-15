@@ -1,0 +1,8 @@
+{
+  "name": "ScreenFlow",
+  "description": "Una aplicación web moderna para grabar pantalla y cámara, diseñada para productividad.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
