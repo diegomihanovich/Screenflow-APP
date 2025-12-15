@@ -56,8 +56,35 @@ export const RecorderSetup: React.FC<RecorderSetupProps> = ({ onStart, onCancel 
 
   useEffect(() => {
     const getDevices = async () => {
+      const stopTracks = (stream: MediaStream) => {
+        stream.getTracks().forEach(t => t.stop());
+      };
+
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        setPermissionError(null);
+
+        const initialDevices = await navigator.mediaDevices.enumerateDevices();
+        const hasVideoInput = initialDevices.some(d => d.kind === 'videoinput');
+        const hasAudioInput = initialDevices.some(d => d.kind === 'audioinput');
+
+        if (hasVideoInput) {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            stopTracks(s);
+          } catch {
+            // ignore
+          }
+        }
+
+        if (hasAudioInput) {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            stopTracks(s);
+          } catch {
+            // ignore
+          }
+        }
+
         const devices = await navigator.mediaDevices.enumerateDevices();
         
         const videoDevices = devices.filter(d => d.kind === 'videoinput').map(d => ({ id: d.deviceId, label: d.label || `Cámara ${d.deviceId.slice(0, 4)}` }));
@@ -65,8 +92,17 @@ export const RecorderSetup: React.FC<RecorderSetupProps> = ({ onStart, onCancel 
 
         setCameras(videoDevices);
         setMics(audioDevices);
-        if (videoDevices.length > 0) setSelectedCamera(videoDevices[0].id);
-        if (audioDevices.length > 0) setSelectedMic(audioDevices[0].id);
+        if (videoDevices.length > 0) setSelectedCamera(prev => prev || videoDevices[0].id);
+        if (audioDevices.length > 0) setSelectedMic(prev => prev || audioDevices[0].id);
+
+        if (audioDevices.length === 0) {
+          setMicEnabled(false);
+          setSelectedMic('');
+        }
+        if (videoDevices.length === 0) {
+          setCameraEnabled(false);
+          setSelectedCamera('');
+        }
       } catch (err) {
         setPermissionError("Se requiere acceso a cámara y micrófono para configurar.");
       }
@@ -91,11 +127,13 @@ export const RecorderSetup: React.FC<RecorderSetupProps> = ({ onStart, onCancel 
   }, [cameraEnabled, selectedCamera]);
 
   const handleStart = () => {
+    const hasMics = mics.length > 0;
+    const hasCameras = cameras.length > 0;
     onStart({
-      includeCamera: cameraEnabled,
-      includeMic: micEnabled,
-      selectedCameraId: selectedCamera,
-      selectedMicId: selectedMic,
+      includeCamera: cameraEnabled && hasCameras,
+      includeMic: micEnabled && hasMics,
+      selectedCameraId: cameraEnabled && hasCameras ? selectedCamera : null,
+      selectedMicId: micEnabled && hasMics ? selectedMic : null,
       qualityPreset
     });
   };
@@ -171,7 +209,10 @@ export const RecorderSetup: React.FC<RecorderSetupProps> = ({ onStart, onCancel 
 
                     <button
                       onClick={() => setMicEnabled(!micEnabled)}
-                      className={`w-12 h-7 rounded-full transition-all duration-300 relative focus:outline-none ring-1 ring-black/5 self-start sm:self-auto ${micEnabled ? 'bg-tech-600' : 'bg-slate-200'}`}
+                      disabled={mics.length === 0}
+                      className={`w-12 h-7 rounded-full transition-all duration-300 relative focus:outline-none ring-1 ring-black/5 self-start sm:self-auto ${
+                        mics.length === 0 ? 'bg-slate-200 opacity-60 cursor-not-allowed' : micEnabled ? 'bg-tech-600' : 'bg-slate-200'
+                      }`}
                       aria-label="Toggle mic"
                     >
                       <span className={`absolute top-1 bg-white w-5 h-5 rounded-full shadow-sm transition-all duration-300 ${micEnabled ? 'left-6' : 'left-1'}`} />
@@ -216,7 +257,10 @@ export const RecorderSetup: React.FC<RecorderSetupProps> = ({ onStart, onCancel 
 
                     <button
                       onClick={() => setCameraEnabled(!cameraEnabled)}
-                      className={`w-12 h-7 rounded-full transition-all duration-300 relative focus:outline-none ring-1 ring-black/5 self-start sm:self-auto ${cameraEnabled ? 'bg-tech-600' : 'bg-slate-200'}`}
+                      disabled={cameras.length === 0}
+                      className={`w-12 h-7 rounded-full transition-all duration-300 relative focus:outline-none ring-1 ring-black/5 self-start sm:self-auto ${
+                        cameras.length === 0 ? 'bg-slate-200 opacity-60 cursor-not-allowed' : cameraEnabled ? 'bg-tech-600' : 'bg-slate-200'
+                      }`}
                       aria-label="Toggle camera"
                     >
                       <span className={`absolute top-1 bg-white w-5 h-5 rounded-full shadow-sm transition-all duration-300 ${cameraEnabled ? 'left-6' : 'left-1'}`} />
