@@ -15,6 +15,27 @@ export const useScreenRecorder = () => {
   const streamsRef = useRef<MediaStream[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  const pickMimeType = () => {
+    // Prefer VP8 for reliability across machines, then VP9, then let the browser decide.
+    const candidates = [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8',
+      'video/webm;codecs=vp9',
+      'video/webm'
+    ];
+
+    for (const type of candidates) {
+      try {
+        if (MediaRecorder.isTypeSupported(type)) return type;
+      } catch {
+        // ignore
+      }
+    }
+
+    return null;
+  };
+
   const startRecording = async (settings: RecorderSettings) => {
     setError(null);
     setRecordedChunks([]);
@@ -53,74 +74,110 @@ export const useScreenRecorder = () => {
 
       streamsRef.current.push(screenStream);
 
+      const screenVideoTracks = screenStream.getVideoTracks();
+      if (screenVideoTracks.length === 0) {
+        setError("No se detecto video de pantalla. Vuelve a intentar.");
+        cleanup();
+        return false;
+      }
+
       // Listen for the user clicking "Stop sharing" via the browser UI
-      screenStream.getVideoTracks()[0].onended = () => {
+      screenVideoTracks[0].onended = () => {
         stopRecording();
       };
 
-      // 2. Prepare Audio Mixing (System + Mic)
-      // We need a new MediaStream that will contain the video track and the mixed audio track
-      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioContext();
-      audioContextRef.current = ctx;
-      const dest = ctx.createMediaStreamDestination();
-
-      // a) Add System Audio (if user shared it)
-      if (screenStream.getAudioTracks().length > 0) {
-        const sysSource = ctx.createMediaStreamSource(screenStream);
-        const sysGain = ctx.createGain();
-        sysGain.gain.value = 1.0;
-        sysSource.connect(sysGain).connect(dest);
-      }
-
-      // b) Add Microphone Audio (if enabled)
+      // 2. Capture microphone (optional)
+      let micStream: MediaStream | null = null;
       if (settings.includeMic) {
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({
+          micStream = await navigator.mediaDevices.getUserMedia({
             audio: settings.selectedMicId ? { deviceId: { exact: settings.selectedMicId } } : true,
             video: false
           });
           streamsRef.current.push(micStream);
 
-          const micSource = ctx.createMediaStreamSource(micStream);
-          const micGain = ctx.createGain();
-          micGain.gain.value = 1.0; // Adjustable volume
-          micSource.connect(micGain).connect(dest);
         } catch (err) {
           console.warn("Microphone access failed or denied:", err);
           // Continue without mic if it fails, but warn user?
+          micStream = null;
         }
       }
 
-      // 3. Combine Video + Mixed Audio
-      const mixedAudioTracks = dest.stream.getAudioTracks();
-      const combinedStream = new MediaStream([
-        ...screenStream.getVideoTracks(),
-        ...mixedAudioTracks
-      ]);
+      // 3. Build the stream we will record.
+      // Only create an AudioContext when we truly need to mix system + mic audio.
+      // This avoids edge cases where a "silent" destination track can break recording on some machines.
+      const systemAudioTracks = screenStream.getAudioTracks();
+      const micAudioTracks = micStream?.getAudioTracks() ?? [];
+      const needsMixing = systemAudioTracks.length > 0 && micAudioTracks.length > 0;
+
+      let combinedStream: MediaStream;
+      if (needsMixing) {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AudioContext();
+        audioContextRef.current = ctx;
+        const dest = ctx.createMediaStreamDestination();
+
+        const sysSource = ctx.createMediaStreamSource(screenStream);
+        const sysGain = ctx.createGain();
+        sysGain.gain.value = 1.0;
+        sysSource.connect(sysGain).connect(dest);
+
+        const micSource = ctx.createMediaStreamSource(micStream as MediaStream);
+        const micGain = ctx.createGain();
+        micGain.gain.value = 1.0;
+        micSource.connect(micGain).connect(dest);
+
+        combinedStream = new MediaStream([...screenVideoTracks, ...dest.stream.getAudioTracks()]);
+      } else if (systemAudioTracks.length > 0) {
+        combinedStream = screenStream;
+      } else if (micAudioTracks.length > 0) {
+        combinedStream = new MediaStream([...screenVideoTracks, ...micAudioTracks]);
+      } else {
+        combinedStream = new MediaStream([...screenVideoTracks]);
+      }
 
       // 4. Initialize MediaRecorder
-      const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9') 
-        ? 'video/webm; codecs=vp9' 
-        : 'video/webm';
+      const mimeType = pickMimeType();
+      const recorderOptions: MediaRecorderOptions = {
+        videoBitsPerSecond: preset.videoBitsPerSecond
+      };
+      if (mimeType) recorderOptions.mimeType = mimeType;
+      if (combinedStream.getAudioTracks().length > 0) {
+        recorderOptions.audioBitsPerSecond = preset.audioBitsPerSecond;
+      }
 
-      const recorder = new MediaRecorder(combinedStream, {
-        mimeType,
-        videoBitsPerSecond: preset.videoBitsPerSecond,
-        audioBitsPerSecond: preset.audioBitsPerSecond
-      });
+      const recorder = new MediaRecorder(combinedStream, recorderOptions);
       mediaRecorderRef.current = recorder;
 
       const chunks: Blob[] = [];
+      let totalBytes = 0;
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           chunks.push(e.data);
+          totalBytes += e.data.size;
         }
       };
 
+      recorder.onerror = (e) => {
+        console.error('MediaRecorder error:', e);
+        setError('No se pudo grabar este video. Verifica permisos y vuelve a intentar.');
+      };
+
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        setRecordedChunks([blob]); // Store as single blob for simplicity in this logic
+        const outType = recorder.mimeType || 'video/webm';
+        const blob = new Blob(chunks, { type: outType });
+
+        if (blob.size === 0 || totalBytes === 0) {
+          console.warn('Recording finished with 0 bytes', {
+            mimeType: recorder.mimeType,
+            videoTracks: combinedStream.getVideoTracks().length,
+            audioTracks: combinedStream.getAudioTracks().length
+          });
+          setRecordedChunks([]);
+          setError('El video salio vacio. Proba grabar de nuevo y asegurate de compartir una pantalla/ventana.');
+        } else {
+          setRecordedChunks([blob]); // Store as single blob for simplicity in this logic
+        }
         cleanup();
       };
 
@@ -145,6 +202,11 @@ export const useScreenRecorder = () => {
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.requestData();
+      } catch {
+        // ignore
+      }
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       setIsPaused(false);

@@ -243,7 +243,7 @@ const App: React.FC = () => {
       {view === 'PREVIEW' && (
         <VideoPreview 
             // If viewing existing, pass undefined chunks. If new, pass chunks.
-            blob={selectedRecording ? undefined : new Blob(recordedChunks, { type: 'video/webm' })}
+            blob={selectedRecording ? undefined : recordedChunks[0]}
             duration={selectedRecording ? selectedRecording.duration : recordingTime}
             recording={selectedRecording || undefined}
             onSave={handleSaveRecording}
