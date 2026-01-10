@@ -13,6 +13,7 @@ import {
   saveBlobToDirectory,
   storeLibraryDirectoryHandle
 } from './utils/fsLibrary';
+import { createVideoThumbnail } from './utils/media';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('DASHBOARD');
@@ -46,6 +47,33 @@ const App: React.FC = () => {
     if (!ok) return;
     const recs = await listWebmRecordingsFromDirectory(dirHandle);
     setRecordings(recs);
+    void hydrateRecordingsWithThumbnails(recs);
+  };
+
+  const hydrateRecordingsWithThumbnails = async (recs: Recording[]) => {
+    const withThumbs = await Promise.all(
+      recs.map(async (rec) => {
+        if (rec.thumbnailUrl) return rec;
+
+        const blob = rec.blob
+          ? rec.blob
+          : rec.fileHandle
+            ? await rec.fileHandle.getFile()
+            : null;
+
+        if (!blob) return rec;
+        const thumbnailUrl = await createVideoThumbnail(blob);
+        return thumbnailUrl ? { ...rec, thumbnailUrl } : rec;
+      })
+    );
+
+    setRecordings((current) => {
+      const currentById = new Map(current.map((rec) => [rec.id, rec]));
+      const merged = withThumbs.map((rec) => currentById.get(rec.id) ?? rec);
+      const mergedIds = new Set(merged.map((rec) => rec.id));
+      const extras = current.filter((rec) => !mergedIds.has(rec.id));
+      return [...merged, ...extras];
+    });
   };
 
   // Load previously-selected library folder (if user granted access earlier)
@@ -133,7 +161,9 @@ const App: React.FC = () => {
       }
 
       // Fallback: keep in-memory only.
-      setRecordings(prev => [newRec, ...prev]);
+      const thumbnailUrl = newRec.blob ? await createVideoThumbnail(newRec.blob) : null;
+      const recordingWithThumb = thumbnailUrl ? { ...newRec, thumbnailUrl } : newRec;
+      setRecordings(prev => [recordingWithThumb, ...prev]);
       setView('DASHBOARD');
       setRecordedChunks([]);
     };

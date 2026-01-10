@@ -138,11 +138,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10" />
                     
                     {/* Placeholder Pattern */}
-                    <div className="w-full h-full flex items-center justify-center bg-slate-50 group-hover:scale-105 transition-transform duration-500">
-                       <div className="w-12 h-12 rounded-full bg-white/80 backdrop-blur-sm flex items-center justify-center shadow-lg text-tech-600">
-                         <Play size={20} fill="currentColor" className="ml-1" />
-                       </div>
-                    </div>
+                    {rec.thumbnailUrl ? (
+                      <img
+                        src={rec.thumbnailUrl}
+                        alt={`Miniatura de ${rec.title}`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-slate-50 group-hover:scale-105 transition-transform duration-500">
+                        <div className="w-12 h-12 rounded-full bg-white/80 backdrop-blur-sm flex items-center justify-center shadow-lg text-tech-600">
+                          <Play size={20} fill="currentColor" className="ml-1" />
+                        </div>
+                      </div>
+                    )}
 
                     <span className="absolute bottom-2 right-2 bg-black/60 backdrop-blur-md text-white text-[10px] font-medium px-2 py-0.5 rounded-md z-20">
                       {formatDuration(rec.duration)}
