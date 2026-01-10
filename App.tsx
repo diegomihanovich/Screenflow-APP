@@ -69,7 +69,10 @@ const App: React.FC = () => {
 
     setRecordings((current) => {
       const currentById = new Map(current.map((rec) => [rec.id, rec]));
-      const merged = withThumbs.map((rec) => currentById.get(rec.id) ?? rec);
+      const merged = withThumbs.map((rec) => ({
+        ...currentById.get(rec.id),
+        ...rec
+      }));
       const mergedIds = new Set(merged.map((rec) => rec.id));
       const extras = current.filter((rec) => !mergedIds.has(rec.id));
       return [...merged, ...extras];
